@@ -1,43 +1,80 @@
-import unittest
-from src.log_analyzer import parse_logs
+import pytest
+import os
+import json
+import tempfile
+from src.log_analyzer import (
+    find_last_log,
+    parse_log_line,
+    analyze_log,
+    generate_report,
+    load_config,
+    default_config
+)
 
 
-class TestLogParser(unittest.TestCase):
-    def setUp(self):
-        """Создаем тестовые данные."""
-        self.logs = [
-            '127.0.0.1 - - [10/Sep/2024:14:55:45 +0000] "GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0" 0.005',
-            '192.168.1.1 - - [10/Sep/2024:14:55:46 +0000] "POST /login HTTP/1.1" 302 512 "-" "Mozilla/5.0" 0.015',
-            '127.0.0.1 - - [10/Sep/2024:14:56:00 +0000] "GET /dashboard HTTP/1.1" 200 1248 "-" "Mozilla/5.0" 0.025'
-        ]
-
-    def test_parse_logs(self):
-        """Проверяем парсинг логов."""
-        result = parse_logs(self.logs)
-
-        # Проверка количества обработанных логов
-        self.assertEqual(len(result['parsed_logs']), 3)
-
-        # Проверка данных первого лога
-        first_log = result['parsed_logs'][0]
-        self.assertEqual(first_log['ip'], '127.0.0.1')
-        self.assertEqual(first_log['method'], 'GET')
-        self.assertEqual(first_log['response_time'], 0.005)
-
-        # Проверка статистики
-        stats = result['stats']
-        self.assertEqual(stats['total_requests'], 3)
-        self.assertAlmostEqual(stats['mean_response_time'], 0.015)
-        self.assertAlmostEqual(stats['median_response_time'], 0.015)
-        self.assertEqual(stats['min_response_time'], 0.005)
-        self.assertEqual(stats['max_response_time'], 0.025)
-        self.assertEqual(stats['status_distribution'], {200: 2, 302: 1})
-
-        # Проверка статистики по IP
-        ip_stats = result['ip_stats']
-        self.assertAlmostEqual(ip_stats['127.0.0.1'], 0.015)
-        self.assertAlmostEqual(ip_stats['192.168.1.1'], 0.015)
+@pytest.fixture
+def temp_log_file():
+    # Создание временного файла лога
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_file.write(
+            b'1.169.137.128 -  - [29/Jun/2017:03:50:22 +0300] "GET /api/v2/banner/16852664 HTTP/1.1" 200 19415 "-" "Slotovod" "-" "1498697422-2118016444-4708-9752769" "712e90144abee9" 0.199\n')
+        temp_file.flush()
+        yield temp_file.name
+        os.remove(temp_file.name)
 
 
-if __name__ == '__main__':
-    unittest.main()
+def test_find_last_log(temp_log_file):
+    log_dir = tempfile.mkdtemp()
+    os.rename(temp_log_file, os.path.join(log_dir, 'test.log'))
+    assert find_last_log(log_dir) == os.path.join(log_dir, 'test.log')
+    os.rmdir(log_dir)
+
+
+def test_parse_log_line():
+    line = '1.169.137.128 -  - [29/Jun/2017:03:50:22 +0300] "GET /api/v2/banner/16852664 HTTP/1.1" 200 19415 "-" "Slotovod" "-" "1498697422-2118016444-4708-9752769" "712e90144abee9" 0.199'
+    result = parse_log_line(line)
+    assert result is not None
+    assert result['url'] == '/api/v2/banner/16852664'
+    assert result['response_time'] == '0.199'
+
+
+def test_analyze_log(temp_log_file):
+    log_data = analyze_log(temp_log_file, 10)
+    assert log_data['total_requests'] == 1
+    assert log_data['total_time'] == 0.199
+    assert len(log_data['urls']) == 1
+
+
+def test_generate_report(temp_log_file):
+    report_data = analyze_log(temp_log_file, 10)
+    template = '<html><body><pre>{{ table_json }}</pre></body></html>'
+    with tempfile.NamedTemporaryFile(delete=False) as template_file, tempfile.NamedTemporaryFile(
+            delete=False) as report_file:
+        template_file.write(template.encode())
+        template_file.flush()
+        generate_report(report_data, report_file.name, template_file.name)
+        with open(report_file.name) as f:
+            content = f.read()
+            assert '{"total_requests": 1, "total_time": 0.199, "urls": [["/api/v2/banner/16852664", {"count": 1, "time_sum": 0.199}]]}' in content
+        os.remove(template_file.name)
+        os.remove(report_file.name)
+
+
+def test_load_config():
+    config_path = tempfile.NamedTemporaryFile(delete=False)
+    config_data = {
+        "LOG_DIR": "./custom_logs",
+        "REPORT_SIZE": 500
+    }
+    with open(config_path.name, 'w') as f:
+        json.dump(config_data, f)
+    config = load_config(config_path.name)
+    assert config['LOG_DIR'] == './custom_logs'
+    assert config['REPORT_SIZE'] == 500
+    assert config['REPORT_TEMPLATE'] == default_config['REPORT_TEMPLATE']
+    os.remove(config_path.name)
+
+
+def test_load_default_config():
+    config = load_config(None)
+    assert config == default_config

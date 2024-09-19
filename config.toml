@@ -1,0 +1,4 @@
+report_dir = "./logs"
+log_dir = "./logs"
+report_size = 1000
+errors_threshold = 50
