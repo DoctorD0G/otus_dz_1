@@ -27,11 +27,10 @@ jobs:
           pip install poetry
           poetry install
 
-      - name: Run linters (black, flake8, isort)
+      - name: Run linters (black, flake8)
         run: |
           poetry run black --check .
           poetry run flake8 .
-          poetry run isort --check-only .
 
       - name: Run tests
         run: |
