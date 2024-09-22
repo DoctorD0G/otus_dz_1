@@ -1,22 +1,26 @@
-import os
-import re
+import argparse
+import gzip
 import json
 import logging
-import argparse
-import structlog
+import os
+import re
 from datetime import datetime
+
+import structlog
 from jinja2 import Template
 
-
 default_config = {
-    "LOG_DIR": "./logs",
-    "REPORT_DIR": "./reports",
-    "REPORT_SIZE": 1000,
-    "LOG_FILE": 'nginx-access-ui.log-20170630',
-    "REPORT_TEMPLATE": "./report.html"
+    'LOG_DIR': './logs',
+    'REPORT_DIR': './reports',
+    'REPORT_SIZE': 1000,
+    'LOG_FILE': 'nginx-access-ui.log-20170630',
+    'REPORT_TEMPLATE': './report.html',
 }
 
-LOG_PATTERN = re.compile(r'(?:GET|POST|PUT|PATCH|DELETE) (.*?) HTTP/\d\.\d.+ (\d+\.\d+)')
+LOG_PATTERN = re.compile(
+    r'(?:GET|POST|PUT|PATCH|DELETE) (.*?) HTTP/\d\.\d.+ (\d+\.\d+)'
+)
+
 
 def configure_logging(log_file=None):
     if log_file:
@@ -26,10 +30,10 @@ def configure_logging(log_file=None):
 
     structlog.configure(
         processors=[
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer()
+            structlog.processors.TimeStamper(fmt='iso'),
+            structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO)
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     )
 
 
@@ -54,34 +58,45 @@ def analyze_log(log_file, report_size):
     total_requests = 0
     total_time = 0.0
 
-    with open(log_file, 'r') as f:
-        for line in f:
-            log_entry = parse_log_line(line)
-            if log_entry:
-                url = log_entry['url']
-                response_time = float(log_entry['response_time'])
-                total_requests += 1
-                total_time += response_time
+    def open_log(file_path):
+        if file_path.endswith('.gz'):
+            return gzip.open(file_path, 'rt')
+        return open(file_path, 'r')
 
-                # Инициализация данных для URL, если его еще нет
-                if url not in urls_data:
-                    urls_data[url] = {'count': 0, 'time_sum': 0.0}
+    try:
+        with open_log(log_file) as f:
+            for line in f:
+                log_entry = parse_log_line(line)
+                if log_entry:
+                    url = log_entry['url']
+                    response_time = float(log_entry['response_time'])
+                    total_requests += 1
+                    total_time += response_time
 
-                # Увеличиваем счетчики для URL
-                urls_data[url]['count'] += 1
-                urls_data[url]['time_sum'] += response_time
+                    if url not in urls_data:
+                        urls_data[url] = {'count': 0, 'time_sum': 0.0}
 
-    # Сортировка URL по времени выполнения (time_sum) и ограничение по report_size
-    sorted_urls = sorted(urls_data.items(), key=lambda x: x[1]['time_sum'], reverse=True)[:report_size]
+                    urls_data[url]['count'] += 1
+                    urls_data[url]['time_sum'] += response_time
 
-    # Формирование отчета
-    report = {
-        "total_requests": total_requests,
-        "total_time": total_time,
-        "urls": sorted_urls
-    }
+        sorted_urls = sorted(
+            urls_data.items(), key=lambda x: x[1]['time_sum'], reverse=True
+        )[:report_size]
 
-    return report
+        report = {
+            'total_requests': total_requests,
+            'total_time': total_time,
+            'urls': sorted_urls,
+        }
+
+        return report
+
+    except FileNotFoundError:
+        print(f"Error: File '{log_file}' not found.")
+    except OSError as e:
+        print(f"Error: Could not process file '{log_file}'. Details: {e}")
+    except Exception as e:
+        print(f'Unexpected error: {e}')
 
 
 def generate_report(data, report_file, template_file):
@@ -104,31 +119,31 @@ def load_config(config_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Log analyzer")
-    parser.add_argument('--config', default='./config.json', help="Path to config file")
+    parser = argparse.ArgumentParser(description='Log analyzer')
+    parser.add_argument('--config', default='./config.json', help='Path to config file')
     args = parser.parse_args()
 
     config = load_config(args.config)
-    configure_logging(config.get("LOG_FILE"))
-    structlog.get_logger().info("Starting log analysis")
+    configure_logging(config.get('LOG_FILE'))
+    structlog.get_logger().info('Starting log analysis')
 
     log_file = find_last_log(config['LOG_DIR'])
     if not log_file:
-        structlog.get_logger().info("No logs to process")
+        structlog.get_logger().info('No logs to process')
         return
 
-    structlog.get_logger().info(f"Analyzing log: {log_file}")
-    report_data = analyze_log(log_file, config["REPORT_SIZE"])
+    structlog.get_logger().info(f'Analyzing log: {log_file}')
+    report_data = analyze_log(log_file, config['REPORT_SIZE'])
 
     report_name = f"report-{datetime.now().strftime('%Y.%m.%d')}.html"
     report_path = os.path.join(config['REPORT_DIR'], report_name)
     generate_report(report_data, report_path, config['REPORT_TEMPLATE'])
 
-    structlog.get_logger().info(f"Report generated: {report_path}")
+    structlog.get_logger().info(f'Report generated: {report_path}')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
         main()
     except Exception as e:
-        structlog.get_logger().exception("Unexpected error occurred", exc_info=True)
+        structlog.get_logger().exception('Unexpected error occurred', exc_info=True)

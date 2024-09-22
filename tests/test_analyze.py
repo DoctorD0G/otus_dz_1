@@ -1,14 +1,16 @@
-import pytest
-import os
 import json
+import os
 import tempfile
+
+import pytest
+
 from src.log_analyzer import (
-    find_last_log,
-    parse_log_line,
     analyze_log,
+    default_config,
+    find_last_log,
     generate_report,
     load_config,
-    default_config
+    parse_log_line,
 )
 
 
@@ -17,7 +19,8 @@ def temp_log_file():
     # Создание временного файла лога
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(
-            b'1.169.137.128 -  - [29/Jun/2017:03:50:22 +0300] "GET /api/v2/banner/16852664 HTTP/1.1" 200 19415 "-" "Slotovod" "-" "1498697422-2118016444-4708-9752769" "712e90144abee9" 0.199\n')
+            b'1.169.137.128 -  - [29/Jun/2017:03:50:22 +0300] "GET /api/v2/banner/16852664 HTTP/1.1" 200 19415 "-" "Slotovod" "-" "1498697422-2118016444-4708-9752769" "712e90144abee9" 0.199\n'
+        )
         temp_file.flush()
         yield temp_file.name
         os.remove(temp_file.name)
@@ -48,24 +51,25 @@ def test_analyze_log(temp_log_file):
 def test_generate_report(temp_log_file):
     report_data = analyze_log(temp_log_file, 10)
     template = '<html><body><pre>{{ table_json }}</pre></body></html>'
-    with tempfile.NamedTemporaryFile(delete=False) as template_file, tempfile.NamedTemporaryFile(
-            delete=False) as report_file:
+    with tempfile.NamedTemporaryFile(
+        delete=False
+    ) as template_file, tempfile.NamedTemporaryFile(delete=False) as report_file:
         template_file.write(template.encode())
         template_file.flush()
         generate_report(report_data, report_file.name, template_file.name)
         with open(report_file.name) as f:
             content = f.read()
-            assert '{"total_requests": 1, "total_time": 0.199, "urls": [["/api/v2/banner/16852664", {"count": 1, "time_sum": 0.199}]]}' in content
+            assert (
+                '{"total_requests": 1, "total_time": 0.199, "urls": [["/api/v2/banner/16852664", {"count": 1, "time_sum": 0.199}]]}'
+                in content
+            )
         os.remove(template_file.name)
         os.remove(report_file.name)
 
 
 def test_load_config():
     config_path = tempfile.NamedTemporaryFile(delete=False)
-    config_data = {
-        "LOG_DIR": "./custom_logs",
-        "REPORT_SIZE": 500
-    }
+    config_data = {'LOG_DIR': './custom_logs', 'REPORT_SIZE': 500}
     with open(config_path.name, 'w') as f:
         json.dump(config_data, f)
     config = load_config(config_path.name)
